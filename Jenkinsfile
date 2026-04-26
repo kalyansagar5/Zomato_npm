@@ -7,17 +7,20 @@ pipeline {
     }
 
     environment {
-        DOCKER_IMAGE = "rajeshtutta123/zomato"
+        DOCKER_IMAGE = "kalyansagar5/zomato"
         AWS_REGION = "us-east-1"
         CLUSTER_NAME = "mycluster"
-        RECIPIENTS = "rajeshtutta123@gmail.com"
+        RECIPIENTS = "ravee2288@gmail.com"
+        NEXUS_URL = "http://100.54.40.237:8081/repository/raw_hosted"
     }
 
     stages {
 
         stage('Clone Repo') {
             steps {
-                git branch: 'main', url: 'https://github.com/rajeshtutta/zomato.git'
+                git branch: 'main',
+                    url: 'https://github.com/kalyansagar5/Zomato_npm.git',
+                    credentialsId: 'Git_cred'
             }
         }
 
@@ -39,16 +42,20 @@ pipeline {
             }
         }
 
+        // ✅ SonarQube with credentials
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sq') {
-                    sh '''
-                    sonar-scanner \
-                      -Dsonar.projectKey=zomato \
-                      -Dsonar.sources=src \
-                      -Dsonar.projectName=Zomato-App \
-                      -Dsonar.projectVersion=${BUILD_NUMBER}
-                    '''
+                withCredentials([string(credentialsId: 'sonarqube_cred', variable: 'SONAR_TOKEN')]) {
+                    withSonarQubeEnv('sq') {
+                        sh '''
+                        sonar-scanner \
+                          -Dsonar.projectKey=zomato \
+                          -Dsonar.sources=. \
+                          -Dsonar.projectName=Zomato-App \
+                          -Dsonar.projectVersion=${BUILD_NUMBER} \
+                          -Dsonar.login=$SONAR_TOKEN
+                        '''
+                    }
                 }
             }
         }
@@ -67,17 +74,18 @@ pipeline {
             }
         }
 
+        // ✅ Nexus with credentials
         stage('Upload to Nexus') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'nexus-cred',
+                    credentialsId: 'nexus_cred',
                     usernameVariable: 'NEXUS_USER',
                     passwordVariable: 'NEXUS_PASS'
                 )]) {
                     sh '''
                     curl -v -u $NEXUS_USER:$NEXUS_PASS \
                     --upload-file zomato-build.zip \
-                    http://localhost:8081/repository/raw-hosted/zomato-build-${BUILD_NUMBER}.zip
+                    $NEXUS_URL/zomato-build-${BUILD_NUMBER}.zip
                     '''
                 }
             }
@@ -95,12 +103,12 @@ pipeline {
         stage('Docker Push') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-cred',
+                    credentialsId: 'docker_cred',
                     usernameVariable: 'USER',
                     passwordVariable: 'PASS'
                 )]) {
                     sh '''
-                    echo $PASS | docker login -u $USER --password-stdin
+                    echo $PASS | docker login -u kalyansagar5 --password-stdin
                     docker push $DOCKER_IMAGE:${BUILD_NUMBER}
                     docker push $DOCKER_IMAGE:latest
                     docker logout
@@ -137,11 +145,11 @@ pipeline {
                 sh '''
                 set -e
 
-                export AWS_DEFAULT_REGION=us-east-1
+                export AWS_DEFAULT_REGION=$AWS_REGION
 
                 aws eks update-kubeconfig \
-                    --region $AWS_DEFAULT_REGION \
-                    --name mycluster
+                    --region $AWS_REGION \
+                    --name $CLUSTER_NAME
 
                 kubectl get nodes
 
