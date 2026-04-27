@@ -11,7 +11,7 @@ pipeline {
         AWS_REGION   = "us-east-1"
         CLUSTER_NAME = "mycluster"
         RECIPIENTS   = "ravee2288@gmail.com"
-        NEXUS_URL    = "http://100.54.40.237:8081/repository/raw_hosted"
+        NEXUS_URL    = "http://100.53.66.253/:8081/repository/raw_hosted"
     }
 
     stages {
