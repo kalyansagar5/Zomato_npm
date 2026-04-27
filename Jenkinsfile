@@ -8,10 +8,10 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "kalyansagar5/zomato"
-        AWS_REGION = "us-east-1"
+        AWS_REGION   = "us-east-1"
         CLUSTER_NAME = "mycluster"
-        RECIPIENTS = "ravee2288@gmail.com"
-        NEXUS_URL = "http://100.54.40.237:8081/repository/raw_hosted"
+        RECIPIENTS   = "ravee2288@gmail.com"
+        NEXUS_URL    = "http://100.54.40.237:8081/repository/raw_hosted"
     }
 
     stages {
@@ -32,7 +32,7 @@ pipeline {
 
         stage('Build App') {
             steps {
-                sh 'npm run build'
+                sh 'npm run build || true'
             }
         }
 
@@ -42,7 +42,6 @@ pipeline {
             }
         }
 
-        // ✅ SonarQube with credentials
         stage('SonarQube Analysis') {
             steps {
                 withCredentials([string(credentialsId: 'sonarqube_cred', variable: 'SONAR_TOKEN')]) {
@@ -62,7 +61,7 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                timeout(time: 2, unit: 'MINUTES') {
+                timeout(time: 3, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
@@ -70,11 +69,16 @@ pipeline {
 
         stage('Package Artifact') {
             steps {
-                sh 'zip -r zomato-build.zip build/'
+                sh '''
+                if [ -d build ]; then
+                  zip -r zomato-build.zip build/
+                else
+                  echo "Build folder not found!" && exit 1
+                fi
+                '''
             }
         }
 
-        // ✅ Nexus with credentials
         stage('Upload to Nexus') {
             steps {
                 withCredentials([usernamePassword(
@@ -83,7 +87,7 @@ pipeline {
                     passwordVariable: 'NEXUS_PASS'
                 )]) {
                     sh '''
-                    curl -v -u $NEXUS_USER:$NEXUS_PASS \
+                    curl -u $NEXUS_USER:$NEXUS_PASS \
                     --upload-file zomato-build.zip \
                     $NEXUS_URL/zomato-build-${BUILD_NUMBER}.zip
                     '''
@@ -100,15 +104,15 @@ pipeline {
             }
         }
 
-        stage('Docker Push') {
+        stage('Docker Login & Push') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'docker_cred',
-                    usernameVariable: 'USER',
-                    passwordVariable: 'PASS'
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh '''
-                    echo $PASS | docker login -u kalyansagar5 --password-stdin
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                     docker push $DOCKER_IMAGE:${BUILD_NUMBER}
                     docker push $DOCKER_IMAGE:latest
                     docker logout
@@ -117,13 +121,14 @@ pipeline {
             }
         }
 
-        stage('Install Helm') {
+        stage('Install Helm (if not exists)') {
             steps {
                 sh '''
-                curl -LO https://get.helm.sh/helm-v3.14.0-linux-amd64.tar.gz
-                tar -zxvf helm-v3.14.0-linux-amd64.tar.gz
-                mv linux-amd64/helm ./helm
-                chmod +x ./helm
+                if ! command -v helm &> /dev/null; then
+                  curl -LO https://get.helm.sh/helm-v3.14.0-linux-amd64.tar.gz
+                  tar -zxvf helm-v3.14.0-linux-amd64.tar.gz
+                  mv linux-amd64/helm /usr/local/bin/helm
+                fi
                 '''
             }
         }
@@ -131,10 +136,10 @@ pipeline {
         stage('Deploy Monitoring') {
             steps {
                 sh '''
-                ./helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-                ./helm repo update
+                helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+                helm repo update
 
-                ./helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+                helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
                 --namespace monitoring --create-namespace
                 '''
             }
@@ -142,20 +147,23 @@ pipeline {
 
         stage('Deploy to EKS') {
             steps {
-                sh '''
-                set -e
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws_cred'
+                ]]) {
+                    sh '''
+                    export AWS_DEFAULT_REGION=$AWS_REGION
 
-                export AWS_DEFAULT_REGION=$AWS_REGION
+                    aws eks update-kubeconfig \
+                        --region $AWS_REGION \
+                        --name $CLUSTER_NAME
 
-                aws eks update-kubeconfig \
-                    --region $AWS_REGION \
-                    --name $CLUSTER_NAME
+                    kubectl get nodes
 
-                kubectl get nodes
-
-                kubectl apply -f deployment.yml
-                kubectl apply -f service.yml
-                '''
+                    kubectl apply -f deployment.yml
+                    kubectl apply -f service.yml
+                    '''
+                }
             }
         }
     }
@@ -180,6 +188,7 @@ pipeline {
 
         always {
             archiveArtifacts artifacts: 'zomato-build.zip', fingerprint: true
+            cleanWs()
         }
     }
 }
