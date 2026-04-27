@@ -11,7 +11,7 @@ pipeline {
         AWS_REGION   = "us-east-1"
         CLUSTER_NAME = "mycluster"
         RECIPIENTS   = "ravee2288@gmail.com"
-        NEXUS_URL    = "http://100.53.66.253/:8081/repository/raw_hosted"
+        NEXUS_URL    = "http://100.53.66.253:8081/repository/raw_hosted"
     }
 
     stages {
@@ -32,13 +32,13 @@ pipeline {
 
         stage('Build App') {
             steps {
-                sh 'npm run build || true'
+                sh 'npm run build'
             }
         }
 
         stage('Test') {
             steps {
-                sh 'npm test || true'
+                sh 'npm test -- --passWithNoTests'
             }
         }
 
@@ -46,14 +46,17 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'sonarqube_cred', variable: 'SONAR_TOKEN')]) {
                     withSonarQubeEnv('sonarscanner') {
-                        sh '''
-                        sonar-scanner \
+
+                        def scannerHome = tool 'sonarscanner'
+
+                        sh """
+                        ${scannerHome}/bin/sonar-scanner \
                           -Dsonar.projectKey=zomato \
                           -Dsonar.sources=. \
                           -Dsonar.projectName=Zomato-App \
                           -Dsonar.projectVersion=${BUILD_NUMBER} \
                           -Dsonar.login=$SONAR_TOKEN
-                        '''
+                        """
                     }
                 }
             }
@@ -61,7 +64,7 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                timeout(time: 3, unit: 'MINUTES') {
+                timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
@@ -86,21 +89,21 @@ pipeline {
                     usernameVariable: 'NEXUS_USER',
                     passwordVariable: 'NEXUS_PASS'
                 )]) {
-                    sh '''
+                    sh """
                     curl -u $NEXUS_USER:$NEXUS_PASS \
                     --upload-file zomato-build.zip \
-                    $NEXUS_URL/zomato-build-${BUILD_NUMBER}.zip
-                    '''
+                    ${NEXUS_URL}/zomato-build-${BUILD_NUMBER}.zip
+                    """
                 }
             }
         }
 
         stage('Docker Build') {
             steps {
-                sh '''
+                sh """
                 docker build -t $DOCKER_IMAGE:${BUILD_NUMBER} .
                 docker tag $DOCKER_IMAGE:${BUILD_NUMBER} $DOCKER_IMAGE:latest
-                '''
+                """
             }
         }
 
@@ -111,12 +114,12 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh '''
+                    sh """
                     echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                     docker push $DOCKER_IMAGE:${BUILD_NUMBER}
                     docker push $DOCKER_IMAGE:latest
                     docker logout
-                    '''
+                    """
                 }
             }
         }
@@ -148,11 +151,11 @@ pipeline {
 
         stage('Deploy to EKS') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws_cred'
                 ]]) {
-                    sh '''
+                    sh """
                     export AWS_DEFAULT_REGION=$AWS_REGION
 
                     aws eks update-kubeconfig \
@@ -163,7 +166,7 @@ pipeline {
 
                     kubectl apply -f deployment.yml
                     kubectl apply -f service.yml
-                    '''
+                    """
                 }
             }
         }
