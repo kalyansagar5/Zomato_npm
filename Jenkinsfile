@@ -47,16 +47,18 @@ pipeline {
                 withCredentials([string(credentialsId: 'sonarqube_cred', variable: 'SONAR_TOKEN')]) {
                     withSonarQubeEnv('sonarscanner') {
 
-                        def scannerHome = tool 'sonarscanner'
+                        script {
+                            def scannerHome = tool 'sonarscanner'
 
-                        sh """
-                        ${scannerHome}/bin/sonar-scanner \
-                          -Dsonar.projectKey=zomato \
-                          -Dsonar.sources=. \
-                          -Dsonar.projectName=Zomato-App \
-                          -Dsonar.projectVersion=${BUILD_NUMBER} \
-                          -Dsonar.login=$SONAR_TOKEN
-                        """
+                            sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=zomato \
+                              -Dsonar.sources=. \
+                              -Dsonar.projectName=Zomato-App \
+                              -Dsonar.projectVersion=${BUILD_NUMBER} \
+                              -Dsonar.login=$SONAR_TOKEN
+                            """
+                        }
                     }
                 }
             }
@@ -151,8 +153,7 @@ pipeline {
 
         stage('Deploy to EKS') {
             steps {
-                withCredentials([[ 
-                    $class: 'AmazonWebServicesCredentialsBinding',
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws_cred'
                 ]]) {
                     sh """
